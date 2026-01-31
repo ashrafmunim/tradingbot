@@ -10,9 +10,10 @@ from textblob import TextBlob
 
 from config import Config
 from utils.logger import get_logger
-from .twitter_feed import TwitterFeed
-from .reddit_feed import RedditFeed
-from .news_feed import NewsFeed
+from utils.database import Database
+from .twitter_feed import TwitterFeed, RawTweet
+from .reddit_feed import RedditFeed, RawRedditPost
+from .news_feed import NewsFeed, RawNewsArticle
 
 logger = get_logger("sentiment")
 
@@ -47,13 +48,15 @@ class SentimentAnalyzer:
     Aggregates sentiment from multiple sources and generates trading signals.
     """
 
-    def __init__(self):
+    def __init__(self, db_path: Optional[str] = None):
         """Initialize sentiment analyzer with all data sources."""
         self.vader = SentimentIntensityAnalyzer()
         self.twitter = TwitterFeed()
         self.reddit = RedditFeed()
         self.news = NewsFeed()
         self.weights = Config.SENTIMENT_WEIGHTS
+        self.db = Database(db_path or Config.DATABASE_PATH)
+        self._log_raw_data = True  # Enable raw data logging
 
     def analyze_text(self, text: str) -> float:
         """
@@ -182,25 +185,93 @@ class SentimentAnalyzer:
         keywords = Config.ASSET_KEYWORDS.get(symbol, [symbol.lower()])
         logger.info(f"Analyzing sentiment for {symbol} with keywords: {keywords}")
 
-        # Gather sentiment from all sources concurrently
-        twitter_task = self.twitter.get_sentiment(keywords)
-        reddit_task = self.reddit.get_sentiment(keywords, symbol)
-        news_task = self.news.get_sentiment(keywords)
+        # Gather sentiment from all sources concurrently (with raw data)
+        twitter_task = self.twitter.get_sentiment_with_raw(keywords)
+        reddit_task = self.reddit.get_sentiment_with_raw(keywords, symbol)
+        news_task = self.news.get_sentiment_with_raw(keywords)
 
-        twitter_score, reddit_score, news_score = await asyncio.gather(
+        twitter_result, reddit_result, news_result = await asyncio.gather(
             twitter_task, reddit_task, news_task, return_exceptions=True
         )
 
-        # Handle exceptions
-        if isinstance(twitter_score, Exception):
-            logger.warning(f"Twitter sentiment failed: {twitter_score}")
-            twitter_score = None
-        if isinstance(reddit_score, Exception):
-            logger.warning(f"Reddit sentiment failed: {reddit_score}")
-            reddit_score = None
-        if isinstance(news_score, Exception):
-            logger.warning(f"News sentiment failed: {news_score}")
-            news_score = None
+        # Extract scores and raw data
+        twitter_score = None
+        reddit_score = None
+        news_score = None
+        raw_data_records = []
+
+        # Process Twitter results
+        if isinstance(twitter_result, Exception):
+            logger.warning(f"Twitter sentiment failed: {twitter_result}")
+        elif twitter_result:
+            twitter_score, raw_tweets = twitter_result
+            if self._log_raw_data:
+                for tweet in raw_tweets:
+                    raw_data_records.append({
+                        "source": "twitter",
+                        "symbol": symbol,
+                        "external_id": tweet.tweet_id,
+                        "content": tweet.text,
+                        "sentiment_score": tweet.sentiment_score,
+                        "author": tweet.author_id,
+                        "engagement_score": tweet.engagement_score,
+                        "metadata": tweet.metrics,
+                        "created_at": tweet.created_at,
+                    })
+
+        # Process Reddit results
+        if isinstance(reddit_result, Exception):
+            logger.warning(f"Reddit sentiment failed: {reddit_result}")
+        elif reddit_result:
+            reddit_score, raw_posts = reddit_result
+            if self._log_raw_data:
+                for post in raw_posts:
+                    raw_data_records.append({
+                        "source": "reddit",
+                        "symbol": symbol,
+                        "external_id": post.post_id,
+                        "content": post.content,
+                        "sentiment_score": post.sentiment_score,
+                        "author": post.author,
+                        "engagement_score": post.engagement_score,
+                        "metadata": {
+                            "subreddit": post.subreddit,
+                            "post_type": post.post_type,
+                            "title": post.title,
+                            "url": post.url,
+                        },
+                        "created_at": post.created_at,
+                    })
+
+        # Process News results
+        if isinstance(news_result, Exception):
+            logger.warning(f"News sentiment failed: {news_result}")
+        elif news_result:
+            news_score, raw_articles = news_result
+            if self._log_raw_data:
+                for article in raw_articles:
+                    raw_data_records.append({
+                        "source": "news",
+                        "symbol": symbol,
+                        "external_id": article.article_id,
+                        "content": article.content,
+                        "sentiment_score": article.sentiment_score,
+                        "author": article.source,
+                        "engagement_score": 0,
+                        "metadata": {
+                            "title": article.title,
+                            "url": article.url,
+                            "news_source": article.source,
+                        },
+                        "created_at": article.published_at,
+                    })
+
+        # Log all raw data in batch
+        if raw_data_records:
+            try:
+                self.db.log_raw_sentiment_batch(raw_data_records)
+            except Exception as e:
+                logger.error(f"Failed to log raw sentiment data: {e}")
 
         # Aggregate scores
         combined_score, confidence = self.aggregate_scores(

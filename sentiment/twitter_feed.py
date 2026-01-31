@@ -1,6 +1,7 @@
 """
 Twitter/X sentiment feed using Tweepy.
 """
+from dataclasses import dataclass
 from typing import Optional
 import asyncio
 
@@ -8,6 +9,18 @@ from config import Config
 from utils.logger import get_logger
 
 logger = get_logger("twitter")
+
+
+@dataclass
+class RawTweet:
+    """Container for raw tweet data."""
+    tweet_id: str
+    text: str
+    sentiment_score: float
+    author_id: Optional[str]
+    engagement_score: float
+    created_at: Optional[str]
+    metrics: dict
 
 
 class TwitterFeed:
@@ -52,6 +65,22 @@ class TwitterFeed:
         Returns:
             Sentiment score from -1 to 1, or None if unavailable
         """
+        result = await self.get_sentiment_with_raw(keywords, max_tweets)
+        return result[0] if result else None
+
+    async def get_sentiment_with_raw(
+        self, keywords: list[str], max_tweets: int = 100
+    ) -> Optional[tuple[float, list[RawTweet]]]:
+        """
+        Fetch tweets and calculate aggregate sentiment with raw data.
+
+        Args:
+            keywords: List of keywords to search
+            max_tweets: Maximum tweets to analyze
+
+        Returns:
+            Tuple of (sentiment_score, list of RawTweet) or None if unavailable
+        """
         if not self.client:
             return None
 
@@ -71,7 +100,7 @@ class TwitterFeed:
                 lambda: self.client.search_recent_tweets(
                     query=query,
                     max_results=min(max_tweets, 100),
-                    tweet_fields=["created_at", "public_metrics"],
+                    tweet_fields=["created_at", "public_metrics", "author_id"],
                 ),
             )
 
@@ -82,6 +111,7 @@ class TwitterFeed:
             # Calculate sentiment with engagement weighting
             scores = []
             weights = []
+            raw_tweets = []
 
             for tweet in tweets.data:
                 text = tweet.text
@@ -99,6 +129,17 @@ class TwitterFeed:
                 scores.append(score)
                 weights.append(weight)
 
+                # Store raw data
+                raw_tweets.append(RawTweet(
+                    tweet_id=str(tweet.id),
+                    text=text,
+                    sentiment_score=score,
+                    author_id=str(tweet.author_id) if tweet.author_id else None,
+                    engagement_score=engagement,
+                    created_at=tweet.created_at.isoformat() if tweet.created_at else None,
+                    metrics=dict(metrics) if metrics else {},
+                ))
+
             if not scores:
                 return None
 
@@ -112,7 +153,7 @@ class TwitterFeed:
                 f"({len(scores)} tweets)"
             )
 
-            return avg_sentiment
+            return avg_sentiment, raw_tweets
 
         except Exception as e:
             logger.error(f"Error fetching Twitter sentiment: {e}")

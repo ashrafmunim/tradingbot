@@ -1,6 +1,7 @@
 """
 News sentiment feed using NewsAPI.
 """
+from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime, timedelta
 import asyncio
@@ -9,6 +10,20 @@ from config import Config
 from utils.logger import get_logger
 
 logger = get_logger("news")
+
+
+@dataclass
+class RawNewsArticle:
+    """Container for raw news article data."""
+    article_id: str  # URL as ID
+    title: str
+    content: str
+    sentiment_score: float
+    source: str
+    author: Optional[str]
+    published_at: Optional[str]
+    url: str
+    description: Optional[str]
 
 
 class NewsFeed:
@@ -46,6 +61,22 @@ class NewsFeed:
         Returns:
             Sentiment score from -1 to 1, or None if unavailable
         """
+        result = await self.get_sentiment_with_raw(keywords, days_back)
+        return result[0] if result else None
+
+    async def get_sentiment_with_raw(
+        self, keywords: list[str], days_back: int = 1
+    ) -> Optional[tuple[float, list[RawNewsArticle]]]:
+        """
+        Fetch news articles and calculate sentiment with raw data.
+
+        Args:
+            keywords: Keywords to search for
+            days_back: Number of days to look back
+
+        Returns:
+            Tuple of (sentiment_score, list of RawNewsArticle) or None if unavailable
+        """
         if not self.api:
             return None
 
@@ -77,6 +108,8 @@ class NewsFeed:
                 return None
 
             scores = []
+            raw_articles = []
+
             for article in articles["articles"]:
                 # Combine title and description for analysis
                 title = article.get("title", "") or ""
@@ -86,6 +119,19 @@ class NewsFeed:
                 if text.strip():
                     score = vader.polarity_scores(text)["compound"]
                     scores.append(score)
+
+                    # Store raw article data
+                    raw_articles.append(RawNewsArticle(
+                        article_id=article.get("url", ""),
+                        title=title,
+                        content=text,
+                        sentiment_score=score,
+                        source=article.get("source", {}).get("name", "unknown"),
+                        author=article.get("author"),
+                        published_at=article.get("publishedAt"),
+                        url=article.get("url", ""),
+                        description=description,
+                    ))
 
             if not scores:
                 return None
@@ -97,7 +143,7 @@ class NewsFeed:
                 f"({len(scores)} articles)"
             )
 
-            return avg_sentiment
+            return avg_sentiment, raw_articles
 
         except Exception as e:
             logger.error(f"Error calculating news sentiment: {e}")

@@ -88,6 +88,37 @@ class Database:
                 )
             """)
 
+            # Raw sentiment data table for backtesting
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raw_sentiment_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    external_id TEXT,
+                    content TEXT NOT NULL,
+                    sentiment_score REAL NOT NULL,
+                    author TEXT,
+                    engagement_score REAL DEFAULT 0,
+                    metadata_json TEXT,
+                    created_at TEXT
+                )
+            """)
+
+            # Create indexes for efficient backtesting queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_raw_sentiment_timestamp
+                ON raw_sentiment_data(timestamp)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_raw_sentiment_symbol
+                ON raw_sentiment_data(symbol, timestamp)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_raw_sentiment_source
+                ON raw_sentiment_data(source, symbol)
+            """)
+
             logger.info("Database tables initialized")
 
     def log_trade(
@@ -293,4 +324,190 @@ class Database:
                 "buy_trades": side_counts.get("buy", 0),
                 "sell_trades": side_counts.get("sell", 0),
                 "total_volume": total_volume,
+            }
+
+    def log_raw_sentiment(
+        self,
+        source: str,
+        symbol: str,
+        content: str,
+        sentiment_score: float,
+        external_id: Optional[str] = None,
+        author: Optional[str] = None,
+        engagement_score: float = 0,
+        metadata: Optional[dict] = None,
+        created_at: Optional[str] = None,
+    ) -> int:
+        """
+        Log raw sentiment data for backtesting.
+
+        Args:
+            source: Data source (twitter, reddit, news)
+            symbol: Asset symbol this data relates to
+            content: Raw text content
+            sentiment_score: Calculated sentiment score
+            external_id: External ID (tweet ID, post ID, article URL)
+            author: Author/source name
+            engagement_score: Engagement metric (likes, upvotes, etc.)
+            metadata: Additional metadata as dict
+            created_at: Original creation timestamp
+
+        Returns:
+            Record ID
+        """
+        import json
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO raw_sentiment_data
+                (timestamp, source, symbol, external_id, content, sentiment_score,
+                 author, engagement_score, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now().isoformat(),
+                    source,
+                    symbol,
+                    external_id,
+                    content[:2000],  # Limit content length
+                    sentiment_score,
+                    author,
+                    engagement_score,
+                    json.dumps(metadata) if metadata else None,
+                    created_at,
+                ),
+            )
+            return cursor.lastrowid
+
+    def log_raw_sentiment_batch(self, records: list[dict]) -> int:
+        """
+        Log multiple raw sentiment records efficiently.
+
+        Args:
+            records: List of dicts with keys: source, symbol, content,
+                     sentiment_score, external_id, author, engagement_score,
+                     metadata, created_at
+
+        Returns:
+            Number of records inserted
+        """
+        import json
+
+        if not records:
+            return 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            timestamp = datetime.now().isoformat()
+
+            data = [
+                (
+                    timestamp,
+                    r.get("source"),
+                    r.get("symbol"),
+                    r.get("external_id"),
+                    r.get("content", "")[:2000],
+                    r.get("sentiment_score", 0),
+                    r.get("author"),
+                    r.get("engagement_score", 0),
+                    json.dumps(r.get("metadata")) if r.get("metadata") else None,
+                    r.get("created_at"),
+                )
+                for r in records
+            ]
+
+            cursor.executemany(
+                """
+                INSERT INTO raw_sentiment_data
+                (timestamp, source, symbol, external_id, content, sentiment_score,
+                 author, engagement_score, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                data,
+            )
+
+            logger.info(f"Logged {len(records)} raw sentiment records")
+            return len(records)
+
+    def get_raw_sentiment_data(
+        self,
+        symbol: Optional[str] = None,
+        source: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        limit: int = 1000,
+    ) -> list[dict]:
+        """
+        Retrieve raw sentiment data for backtesting.
+
+        Args:
+            symbol: Filter by symbol
+            source: Filter by source (twitter, reddit, news)
+            start_time: Start timestamp (ISO format)
+            end_time: End timestamp (ISO format)
+            limit: Maximum records to return
+
+        Returns:
+            List of raw sentiment records
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM raw_sentiment_data WHERE 1=1"
+            params = []
+
+            if symbol:
+                query += " AND symbol = ?"
+                params.append(symbol)
+            if source:
+                query += " AND source = ?"
+                params.append(source)
+            if start_time:
+                query += " AND timestamp >= ?"
+                params.append(start_time)
+            if end_time:
+                query += " AND timestamp <= ?"
+                params.append(end_time)
+
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_raw_sentiment_stats(self) -> dict:
+        """Get statistics about collected raw sentiment data."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Total records
+            cursor.execute("SELECT COUNT(*) as count FROM raw_sentiment_data")
+            total = cursor.fetchone()["count"]
+
+            # By source
+            cursor.execute(
+                "SELECT source, COUNT(*) as count FROM raw_sentiment_data GROUP BY source"
+            )
+            by_source = {row["source"]: row["count"] for row in cursor.fetchall()}
+
+            # By symbol
+            cursor.execute(
+                "SELECT symbol, COUNT(*) as count FROM raw_sentiment_data GROUP BY symbol"
+            )
+            by_symbol = {row["symbol"]: row["count"] for row in cursor.fetchall()}
+
+            # Date range
+            cursor.execute(
+                "SELECT MIN(timestamp) as earliest, MAX(timestamp) as latest FROM raw_sentiment_data"
+            )
+            row = cursor.fetchone()
+
+            return {
+                "total_records": total,
+                "by_source": by_source,
+                "by_symbol": by_symbol,
+                "earliest": row["earliest"],
+                "latest": row["latest"],
             }

@@ -245,7 +245,28 @@ def main():
         action="store_true",
         help="Show trading statistics and exit",
     )
+    parser.add_argument(
+        "--raw-stats",
+        action="store_true",
+        help="Show raw sentiment data statistics",
+    )
     args = parser.parse_args()
+
+    if args.raw_stats:
+        db = Database(Config.DATABASE_PATH)
+        stats = db.get_raw_sentiment_stats()
+        print("\n=== Raw Sentiment Data Statistics ===")
+        print(f"Total Records: {stats['total_records']:,}")
+        print(f"\nBy Source:")
+        for source, count in stats.get('by_source', {}).items():
+            print(f"  {source}: {count:,}")
+        print(f"\nBy Symbol:")
+        for symbol, count in stats.get('by_symbol', {}).items():
+            print(f"  {symbol}: {count:,}")
+        if stats.get('earliest'):
+            print(f"\nDate Range: {stats['earliest'][:10]} to {stats['latest'][:10]}")
+        print()
+        return
 
     if args.stats:
         db = Database(Config.DATABASE_PATH)
