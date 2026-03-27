@@ -39,6 +39,12 @@ Thumbs.db
 # Data files (uncomment if needed)
 # data/
 
+# Database
+*.db
+
+# Logs
+logs/
+
 # Misc
 *.pem
 *.tsbuildinfo

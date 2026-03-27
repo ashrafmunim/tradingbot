@@ -17,64 +17,122 @@ import { SentimentCard } from '@/components/SentimentCard'
 import { TradeTable } from '@/components/TradeTable'
 import { FearGreedGauge } from '@/components/FearGreedGauge'
 import { PortfolioChart } from '@/components/PortfolioChart'
+import { useFetch } from '@/lib/hooks'
 import type { Trade } from '@/lib/types'
 
-// Mock data - in production, this would come from your API
-const mockMarketData = [
-  { symbol: 'BTC', price: 43250.50, change: 2.34 },
-  { symbol: 'ETH', price: 2280.75, change: -1.15 },
-  { symbol: 'SOL', price: 98.42, change: 5.67 },
-  { symbol: 'AAPL', price: 185.92, change: 0.45 },
-  { symbol: 'GOOGL', price: 141.80, change: 1.23 },
-  { symbol: 'MSFT', price: 378.91, change: -0.32 },
-  { symbol: 'TSLA', price: 248.50, change: 3.21 },
-  { symbol: 'NVDA', price: 495.22, change: 2.89 },
-]
+// Signal mapping from DB combined_score to signal string
+function scoreToSignal(score: number): string {
+  if (score >= 0.6) return 'strong_buy'
+  if (score >= 0.3) return 'buy'
+  if (score <= -0.6) return 'strong_sell'
+  if (score <= -0.3) return 'sell'
+  return 'hold'
+}
 
-const mockSentiments = [
-  { symbol: 'BTC/USDT', price: 43250.50, change: 2.34, combinedScore: 0.65, twitterScore: 0.72, redditScore: 0.58, newsScore: 0.61, signal: 'strong_buy', confidence: 0.82 },
-  { symbol: 'ETH/USDT', price: 2280.75, change: -1.15, combinedScore: 0.28, twitterScore: 0.35, redditScore: 0.22, newsScore: 0.25, signal: 'hold', confidence: 0.65 },
-  { symbol: 'SOL/USDT', price: 98.42, change: 5.67, combinedScore: 0.52, twitterScore: 0.61, redditScore: 0.48, newsScore: 0.45, signal: 'buy', confidence: 0.71 },
-  { symbol: 'AAPL', price: 185.92, change: 0.45, combinedScore: 0.41, twitterScore: 0.38, redditScore: null, newsScore: 0.44, signal: 'buy', confidence: 0.58 },
-  { symbol: 'TSLA', price: 248.50, change: 3.21, combinedScore: -0.35, twitterScore: -0.28, redditScore: -0.45, newsScore: -0.32, signal: 'sell', confidence: 0.73 },
-  { symbol: 'NVDA', price: 495.22, change: 2.89, combinedScore: 0.78, twitterScore: 0.85, redditScore: 0.72, newsScore: 0.74, signal: 'strong_buy', confidence: 0.88 },
-]
-
-const mockTrades: Trade[] = [
-  { id: 1, timestamp: '2024-01-15T10:30:00', symbol: 'BTC/USDT', side: 'buy', quantity: 0.05, price: 42850, total_value: 2142.50, sentiment_score: 0.65, signal_type: 'strong_buy', status: 'executed' },
-  { id: 2, timestamp: '2024-01-15T09:15:00', symbol: 'NVDA', side: 'buy', quantity: 10, price: 492.50, total_value: 4925.00, sentiment_score: 0.72, signal_type: 'buy', status: 'executed' },
-  { id: 3, timestamp: '2024-01-14T16:45:00', symbol: 'TSLA', side: 'sell', quantity: 5, price: 245.80, total_value: 1229.00, sentiment_score: -0.38, signal_type: 'sell', status: 'executed' },
-  { id: 4, timestamp: '2024-01-14T14:20:00', symbol: 'ETH/USDT', side: 'buy', quantity: 1.2, price: 2250, total_value: 2700.00, sentiment_score: 0.45, signal_type: 'buy', status: 'executed' },
-  { id: 5, timestamp: '2024-01-14T11:00:00', symbol: 'SOL/USDT', side: 'buy', quantity: 25, price: 95.50, total_value: 2387.50, sentiment_score: 0.52, signal_type: 'buy', status: 'executed' },
-]
-
-const mockPortfolioHistory = [
-  { timestamp: '2024-01-01', value: 10000 },
-  { timestamp: '2024-01-03', value: 10250 },
-  { timestamp: '2024-01-05', value: 10180 },
-  { timestamp: '2024-01-07', value: 10420 },
-  { timestamp: '2024-01-09', value: 10650 },
-  { timestamp: '2024-01-11', value: 10580 },
-  { timestamp: '2024-01-13', value: 10890 },
-  { timestamp: '2024-01-15', value: 11234 },
-]
+// Calculate confidence from available sources
+function calcConfidence(t: number | null, r: number | null, n: number | null): number {
+  const sources = [t, r, n].filter(s => s !== null && s !== undefined)
+  if (sources.length === 0) return 0
+  // More sources = higher base confidence, agreement boosts it
+  const base = sources.length / 3
+  const scores = sources as number[]
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length
+  const variance = scores.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / scores.length
+  const agreement = Math.max(0, 1 - variance * 4)
+  return Math.min(1, base * 0.6 + agreement * 0.4)
+}
 
 export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState(new Date())
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  // Fetch real data from API routes (refresh every 30s for market, 60s for others)
+  const { data: marketData, refetch: refetchMarket } = useFetch<any[]>(`/api/market?_=${refreshKey}`, 30000)
+  const { data: dbSentiment, refetch: refetchSentiment } = useFetch<any[]>(`/api/sentiment?_=${refreshKey}`, 60000)
+  const { data: dbTrades, refetch: refetchTrades } = useFetch<any[]>(`/api/trades?_=${refreshKey}`)
+  const { data: tradeStats, refetch: refetchStats } = useFetch<any>(`/api/trades?stats=true&_=${refreshKey}`)
+  const { data: portfolioHistory, refetch: refetchPortfolio } = useFetch<any[]>(`/api/portfolio?history=true&_=${refreshKey}`)
+  const { data: portfolioLatest } = useFetch<any>(`/api/portfolio?_=${refreshKey}`)
+
+  useEffect(() => {
+    setLastUpdate(new Date())
+  }, [])
 
   const handleRefresh = () => {
     setIsRefreshing(true)
-    setTimeout(() => {
-      setIsRefreshing(false)
-      setLastUpdate(new Date())
-    }, 1000)
+    setRefreshKey(k => k + 1)
+    refetchMarket()
+    refetchSentiment()
+    refetchTrades()
+    refetchStats()
+    refetchPortfolio()
+    setLastUpdate(new Date())
+    setTimeout(() => setIsRefreshing(false), 1000)
   }
+
+  // Build market ticker items from live Binance data
+  const tickerItems = Array.isArray(marketData) ? marketData : []
+
+  // Build sentiment cards by merging DB sentiment with live prices
+  const priceMap: Record<string, { price: number; change: number }> = {}
+  if (Array.isArray(marketData)) {
+    marketData.forEach((m: any) => {
+      priceMap[m.symbol] = { price: m.price, change: m.change }
+    })
+  }
+
+  const sentiments = (dbSentiment || []).map((s: any) => {
+    const displaySymbol = s.symbol.replace('/USDT', '')
+    const live = priceMap[displaySymbol]
+    return {
+      symbol: s.symbol,
+      price: live?.price || 0,
+      change: live?.change || 0,
+      combinedScore: s.combined_score || 0,
+      twitterScore: s.twitter_score,
+      redditScore: s.reddit_score,
+      newsScore: s.news_score,
+      signal: s.signal || scoreToSignal(s.combined_score || 0),
+      confidence: calcConfidence(s.twitter_score, s.reddit_score, s.news_score),
+    }
+  })
+
+  // Portfolio stats
+  const portfolioValue = portfolioLatest?.total_value || 10000
+  const portfolioChange = portfolioValue > 0
+    ? (((portfolioValue - 10000) / 10000) * 100).toFixed(1)
+    : '0.0'
+
+  // Portfolio chart data
+  const chartData = (portfolioHistory || [])
+    .slice()
+    .reverse()
+    .map((s: any) => ({
+      timestamp: s.timestamp,
+      value: s.total_value,
+    }))
+
+  // Trade data
+  const trades: Trade[] = (dbTrades || []).map((t: any) => ({
+    id: t.id,
+    timestamp: t.timestamp,
+    symbol: t.symbol,
+    side: t.side,
+    quantity: t.quantity,
+    price: t.price,
+    total_value: t.total_value,
+    sentiment_score: t.sentiment_score,
+    signal_type: t.signal_type,
+    status: t.status,
+  }))
+
+  const totalTrades = tradeStats?.total_trades || 0
 
   return (
     <div className="min-h-screen">
-      {/* Market Ticker */}
-      <MarketTicker items={mockMarketData} />
+      {/* Market Ticker - Live from Binance */}
+      <MarketTicker items={tickerItems} />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Page Header */}
@@ -84,7 +142,7 @@ export default function Dashboard() {
               Dashboard
             </h1>
             <p className="text-gray-600 dark:text-slate-400 text-sm">
-              Last updated: {lastUpdate.toLocaleTimeString()}
+              Last updated: {lastUpdate ? lastUpdate.toLocaleTimeString() : '—'}
             </p>
           </div>
           <button
@@ -101,30 +159,30 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard
             title="Portfolio Value"
-            value="$11,234.50"
-            change="+12.3% from start"
-            changeType="positive"
+            value={`$${portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            change={`${parseFloat(portfolioChange) >= 0 ? '+' : ''}${portfolioChange}% from start`}
+            changeType={parseFloat(portfolioChange) >= 0 ? 'positive' : 'negative'}
             icon={Wallet}
           />
           <StatCard
-            title="Today's P&L"
-            value="+$156.80"
-            change="+1.42%"
-            changeType="positive"
+            title="Cash Balance"
+            value={`$${(portfolioLatest?.cash_balance || 10000).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            change={`Positions: $${(portfolioLatest?.positions_value || 0).toLocaleString()}`}
+            changeType="neutral"
             icon={TrendingUp}
             iconColor="text-emerald-500"
           />
           <StatCard
             title="Total Trades"
-            value="48"
-            change="5 today"
+            value={totalTrades.toString()}
+            change={`${tradeStats?.buy_trades || 0} buys / ${tradeStats?.sell_trades || 0} sells`}
             changeType="neutral"
             icon={Activity}
           />
           <StatCard
-            title="Win Rate"
-            value="68%"
-            change="32 wins / 16 losses"
+            title="Trade Volume"
+            value={`$${(tradeStats?.total_volume || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            change="Total traded"
             changeType="neutral"
             icon={BarChart3}
           />
@@ -136,23 +194,15 @@ export default function Dashboard() {
           <Card className="lg:col-span-2">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Portfolio Performance</CardTitle>
-              <div className="flex items-center gap-2">
-                <button className="px-3 py-1 text-sm text-gray-600 dark:text-slate-400 hover:text-[#1a73e8] dark:hover:text-blue-400">
-                  1D
-                </button>
-                <button className="px-3 py-1 text-sm font-medium text-[#1a73e8] bg-[#e8f0fe] dark:bg-blue-900/30 rounded">
-                  1W
-                </button>
-                <button className="px-3 py-1 text-sm text-gray-600 dark:text-slate-400 hover:text-[#1a73e8] dark:hover:text-blue-400">
-                  1M
-                </button>
-                <button className="px-3 py-1 text-sm text-gray-600 dark:text-slate-400 hover:text-[#1a73e8] dark:hover:text-blue-400">
-                  ALL
-                </button>
-              </div>
             </CardHeader>
             <CardContent>
-              <PortfolioChart data={mockPortfolioHistory} />
+              {chartData.length > 0 ? (
+                <PortfolioChart data={chartData} />
+              ) : (
+                <div className="flex items-center justify-center h-[200px] text-gray-400 dark:text-slate-500 text-sm">
+                  No portfolio history yet — run the bot to start tracking
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -181,11 +231,19 @@ export default function Dashboard() {
               <ArrowUpRight className="w-4 h-4" />
             </a>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {mockSentiments.slice(0, 6).map((sentiment) => (
-              <SentimentCard key={sentiment.symbol} {...sentiment} />
-            ))}
-          </div>
+          {sentiments.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {sentiments.slice(0, 6).map((sentiment: any) => (
+                <SentimentCard key={sentiment.symbol} {...sentiment} />
+              ))}
+            </div>
+          ) : (
+            <Card className="p-8">
+              <p className="text-center text-gray-400 dark:text-slate-500 text-sm">
+                No sentiment data yet — run the bot to start analyzing
+              </p>
+            </Card>
+          )}
         </div>
 
         {/* Recent Trades */}
@@ -201,7 +259,15 @@ export default function Dashboard() {
                 <ArrowUpRight className="w-4 h-4" />
               </a>
             </CardHeader>
-            <TradeTable trades={mockTrades} compact />
+            {trades.length > 0 ? (
+              <TradeTable trades={trades} compact />
+            ) : (
+              <CardContent>
+                <p className="text-center text-gray-400 dark:text-slate-500 text-sm py-4">
+                  No trades yet — the bot hasn't executed any trades
+                </p>
+              </CardContent>
+            )}
           </Card>
         </div>
       </div>

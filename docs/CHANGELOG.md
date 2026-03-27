@@ -62,10 +62,22 @@ git commit -m "Add raw sentiment data logging for backtesting"
 
 ---
 
+## Setup Completed (Not Committed)
+
+### Environment Configuration
+- [x] Created `.env` file from template
+- [ ] Add News API key (https://newsapi.org)
+- [ ] Add Reddit credentials (https://reddit.com/prefs/apps)
+- [ ] Add Twitter credentials (https://developer.twitter.com)
+- [ ] Add Alpaca credentials for trading (https://alpaca.markets)
+- [ ] Test with `python3 main.py --once`
+
+---
+
 ## Next Up
 
 ### Priority 1: API Setup
-- [ ] Create `.env` file with API credentials
+- [x] Create `.env` file with API credentials
 - [ ] Test with at least one sentiment source (News API is easiest)
 
 ### Priority 2: Connect Dashboard to Backend
