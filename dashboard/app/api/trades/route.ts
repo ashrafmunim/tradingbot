@@ -7,11 +7,11 @@ export async function GET(request: Request) {
     const stats = searchParams.get('stats')
 
     if (stats === 'true') {
-      return NextResponse.json(getTradeStats())
+      return NextResponse.json(await getTradeStats())
     }
 
     const limit = parseInt(searchParams.get('limit') || '50')
-    const trades = getRecentTrades(limit)
+    const trades = await getRecentTrades(limit)
     return NextResponse.json(trades)
   } catch (error: any) {
     console.error('Trades fetch error:', error)

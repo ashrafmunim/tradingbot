@@ -24,6 +24,7 @@ pandas-ta>=0.3.14b
 
 # Storage
 redis>=4.5.0
+libsql-experimental>=0.0.68
 
 # Scheduling
 APScheduler>=3.10.0

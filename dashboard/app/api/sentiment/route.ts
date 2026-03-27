@@ -7,11 +7,11 @@ export async function GET(request: Request) {
     const symbol = searchParams.get('symbol')
 
     if (symbol) {
-      const history = getSentimentHistory(symbol, 100)
+      const history = await getSentimentHistory(symbol, 100)
       return NextResponse.json(history)
     }
 
-    const latest = getLatestSentimentPerSymbol()
+    const latest = await getLatestSentimentPerSymbol()
     return NextResponse.json(latest)
   } catch (error: any) {
     console.error('Sentiment fetch error:', error)

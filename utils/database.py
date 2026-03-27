@@ -1,7 +1,8 @@
 """
 Database module for trade logging and history.
+Uses Turso (libsql) for shared cloud database with local SQLite fallback.
 """
-import sqlite3
+import libsql_experimental as libsql
 from datetime import datetime
 from typing import Optional
 from contextlib import contextmanager
@@ -12,23 +13,33 @@ logger = get_logger("database")
 
 
 class Database:
-    """SQLite database for storing trade history and sentiment data."""
+    """Database for storing trade history and sentiment data."""
 
-    def __init__(self, db_path: str = "tradingbot.db"):
+    def __init__(self, db_path: str = "tradingbot.db", turso_url: str = "", turso_token: str = ""):
         """
         Initialize database connection.
 
         Args:
-            db_path: Path to SQLite database file
+            db_path: Path to local SQLite database file (used as fallback)
+            turso_url: Turso database URL (libsql://...)
+            turso_token: Turso auth token
         """
+        self.turso_url = turso_url
+        self.turso_token = turso_token
         self.db_path = db_path
         self._create_tables()
 
     @contextmanager
     def _get_connection(self):
         """Context manager for database connections."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        if self.turso_url:
+            conn = libsql.connect(
+                database=self.turso_url,
+                auth_token=self.turso_token,
+            )
+        else:
+            conn = libsql.connect(database=self.db_path)
+        conn.row_factory = libsql.Row if hasattr(libsql, 'Row') else None
         try:
             yield conn
             conn.commit()
@@ -135,16 +146,6 @@ class Database:
         """
         Log a trade to the database.
 
-        Args:
-            symbol: Trading symbol
-            side: buy or sell
-            quantity: Amount traded
-            price: Execution price
-            sentiment_score: Sentiment score that triggered trade
-            signal_type: Type of signal (strong_buy, buy, sell, strong_sell)
-            order_id: Exchange order ID
-            notes: Additional notes
-
         Returns:
             Trade ID
         """
@@ -186,14 +187,6 @@ class Database:
         """
         Log sentiment data to the database.
 
-        Args:
-            symbol: Asset symbol
-            combined_score: Weighted combined sentiment score
-            twitter_score: Twitter sentiment score
-            reddit_score: Reddit sentiment score
-            news_score: News sentiment score
-            signal: Generated trading signal
-
         Returns:
             Sentiment record ID
         """
@@ -227,12 +220,6 @@ class Database:
     ) -> int:
         """
         Log a portfolio snapshot.
-
-        Args:
-            total_value: Total portfolio value
-            cash_balance: Available cash
-            positions_value: Value of open positions
-            positions_json: JSON string of positions
 
         Returns:
             Snapshot ID
@@ -341,17 +328,6 @@ class Database:
         """
         Log raw sentiment data for backtesting.
 
-        Args:
-            source: Data source (twitter, reddit, news)
-            symbol: Asset symbol this data relates to
-            content: Raw text content
-            sentiment_score: Calculated sentiment score
-            external_id: External ID (tweet ID, post ID, article URL)
-            author: Author/source name
-            engagement_score: Engagement metric (likes, upvotes, etc.)
-            metadata: Additional metadata as dict
-            created_at: Original creation timestamp
-
         Returns:
             Record ID
         """
@@ -384,11 +360,6 @@ class Database:
     def log_raw_sentiment_batch(self, records: list[dict]) -> int:
         """
         Log multiple raw sentiment records efficiently.
-
-        Args:
-            records: List of dicts with keys: source, symbol, content,
-                     sentiment_score, external_id, author, engagement_score,
-                     metadata, created_at
 
         Returns:
             Number of records inserted
@@ -441,13 +412,6 @@ class Database:
     ) -> list[dict]:
         """
         Retrieve raw sentiment data for backtesting.
-
-        Args:
-            symbol: Filter by symbol
-            source: Filter by source (twitter, reddit, news)
-            start_time: Start timestamp (ISO format)
-            end_time: End timestamp (ISO format)
-            limit: Maximum records to return
 
         Returns:
             List of raw sentiment records

@@ -56,7 +56,7 @@ class OrderExecutor:
             risk_manager: Risk manager for position validation
         """
         self.risk_manager = risk_manager or RiskManager()
-        self.db = Database(Config.DATABASE_PATH)
+        self.db = Database(Config.DATABASE_PATH, Config.TURSO_DATABASE_URL, Config.TURSO_AUTH_TOKEN)
         self.crypto_exchange = None
         self.stock_client = None
         self._init_clients()

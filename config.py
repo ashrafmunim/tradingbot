@@ -85,8 +85,10 @@ class Config:
     CRYPTO_SUBREDDITS = ["cryptocurrency", "bitcoin", "ethereum", "CryptoMarkets"]
     STOCK_SUBREDDITS = ["wallstreetbets", "stocks", "investing", "StockMarket"]
 
-    # Database
-    DATABASE_PATH = "tradingbot.db"
+    # Database (Turso)
+    TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
+    TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+    DATABASE_PATH = "tradingbot.db"  # local fallback
 
     @classmethod
     def is_paper_trading(cls) -> bool:

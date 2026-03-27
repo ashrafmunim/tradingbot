@@ -43,7 +43,7 @@ class TradingBot:
         self.risk_manager = RiskManager()
         self.strategy = TradingStrategy(self.risk_manager)
         self.executor = OrderExecutor(self.risk_manager)
-        self.db = Database(Config.DATABASE_PATH)
+        self.db = Database(Config.DATABASE_PATH, Config.TURSO_DATABASE_URL, Config.TURSO_AUTH_TOKEN)
 
         # Scheduler
         self.scheduler = AsyncIOScheduler()
@@ -253,7 +253,7 @@ def main():
     args = parser.parse_args()
 
     if args.raw_stats:
-        db = Database(Config.DATABASE_PATH)
+        db = Database(Config.DATABASE_PATH, Config.TURSO_DATABASE_URL, Config.TURSO_AUTH_TOKEN)
         stats = db.get_raw_sentiment_stats()
         print("\n=== Raw Sentiment Data Statistics ===")
         print(f"Total Records: {stats['total_records']:,}")
@@ -269,7 +269,7 @@ def main():
         return
 
     if args.stats:
-        db = Database(Config.DATABASE_PATH)
+        db = Database(Config.DATABASE_PATH, Config.TURSO_DATABASE_URL, Config.TURSO_AUTH_TOKEN)
         stats = db.get_trade_stats()
         print("\n=== Trading Statistics ===")
         print(f"Total Trades: {stats['total_trades']}")

@@ -8,11 +8,11 @@ export async function GET(request: Request) {
 
     if (history === 'true') {
       const limit = parseInt(searchParams.get('limit') || '100')
-      const snapshots = getPortfolioHistory(limit)
+      const snapshots = await getPortfolioHistory(limit)
       return NextResponse.json(snapshots)
     }
 
-    const latest = getLatestPortfolioSnapshot()
+    const latest = await getLatestPortfolioSnapshot()
     return NextResponse.json(latest || { total_value: 0, cash_balance: 0, positions_value: 0 })
   } catch (error: any) {
     console.error('Portfolio fetch error:', error)

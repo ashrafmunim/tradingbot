@@ -55,7 +55,7 @@ class SentimentAnalyzer:
         self.reddit = RedditFeed()
         self.news = NewsFeed()
         self.weights = Config.SENTIMENT_WEIGHTS
-        self.db = Database(db_path or Config.DATABASE_PATH)
+        self.db = Database(db_path or Config.DATABASE_PATH, Config.TURSO_DATABASE_URL, Config.TURSO_AUTH_TOKEN)
         self._log_raw_data = True  # Enable raw data logging
 
     def analyze_text(self, text: str) -> float:
